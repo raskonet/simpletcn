@@ -1,0 +1,32 @@
+#include <string>
+#include <cstddef> 
+
+class Tensor {
+private:
+    double* data;
+    int channels;
+    int width;
+    size_t total_size;
+
+public:
+    Tensor(int channels, int width);
+    ~Tensor();
+
+    Tensor(const Tensor&) = delete;
+    Tensor& operator=(const Tensor&) = delete;
+
+    Tensor(Tensor&& other) noexcept;
+    Tensor& operator=(Tensor&& other) noexcept;
+
+    double* get_data();
+    const double* get_data() const;
+    int get_channels() const;
+    int get_width() const;
+    size_t get_total_size() const;
+    std::string dimensions_str() const;
+
+    void zero(); 
+};
+
+#endif
+
