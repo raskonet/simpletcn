@@ -7,7 +7,9 @@
 #include "dropout.hpp"
 #include <memory>
 
+void test_numerical_gradients();
 class ResidualBlock : public Layer {
+  friend void test_numerical_gradients();
 private:
     Conv1D conv1;
     ReLU relu1;
@@ -18,6 +20,9 @@ private:
     Dropout dropout2;
     
     std::unique_ptr<Conv1D> downsample; 
+
+    const Tensor* input_cache;
+
 
 public:
     ResidualBlock(int in_channels, int n_filters, int kernel_size, int dilation, double dropout_rate);

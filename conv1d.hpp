@@ -5,7 +5,10 @@
 #include "tensor.hpp"
 #include <memory>
 
+void test_numerical_gradients();
+
 class Conv1D : public Layer {
+  friend void test_numerical_gradients();
 private:
     int in_channels;
     int out_channels;

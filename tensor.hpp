@@ -1,3 +1,6 @@
+#ifndef TENSOR_HPP
+#define TENSOR_HPP
+
 #include <string>
 #include <cstddef> 
 
@@ -18,6 +21,8 @@ public:
     Tensor(Tensor&& other) noexcept;
     Tensor& operator=(Tensor&& other) noexcept;
 
+
+
     double* get_data();
     const double* get_data() const;
     int get_channels() const;
@@ -28,5 +33,4 @@ public:
     void zero(); 
 };
 
-#endif
-
+#endif 

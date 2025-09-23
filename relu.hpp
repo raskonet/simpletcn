@@ -15,3 +15,5 @@ public:
     Tensor forward(const Tensor& input) override;
     Tensor backward(const Tensor& output_gradient) override;
 };
+
+#endif

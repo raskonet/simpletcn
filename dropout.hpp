@@ -3,11 +3,12 @@
 
 #include "layer.hpp"
 #include "tensor.hpp"
+#include <memory> 
 
 class Dropout : public Layer {
 private:
     double dropout_rate;
-    Tensor mask; // Mask is  state saved between fwd/bwd for a single pass.
+    std::unique_ptr<Tensor> mask; 
     bool is_training;
 
 public:
