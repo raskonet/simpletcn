@@ -26,21 +26,25 @@ void ResidualBlock::set_training_mode(bool training) {
 void ResidualBlock::zero_grad() {
     conv1.zero_grad();
     conv2.zero_grad();
+    if (downsample) downsample->zero_grad();
+}
+
+void ResidualBlock::clip_gradients(double threshold) {
+    conv1.clip_gradients(threshold);
+    conv2.clip_gradients(threshold);
     if (downsample) {
-        downsample->zero_grad();
+        downsample->clip_gradients(threshold);
     }
 }
 
 void ResidualBlock::update(double learning_rate) {
     conv1.update(learning_rate);
     conv2.update(learning_rate);
-    if (downsample) {
-        downsample->update(learning_rate);
-    }
+    if (downsample) downsample->update(learning_rate);
 }
 
 Tensor ResidualBlock::forward(const Tensor& input) {
-    this->input_cache = &input;
+    this->input_cache = std::make_unique<Tensor>(input.clone());
 
     Tensor main_path_out = conv1.forward(input);
     main_path_out = relu1.forward(main_path_out);
@@ -50,6 +54,7 @@ Tensor ResidualBlock::forward(const Tensor& input) {
     main_path_out = dropout2.forward(main_path_out);
 
     Tensor residual_out(input.get_channels(), input.get_width());
+    
     if (downsample) {
         residual_out = downsample->forward(input);
     } else {
@@ -94,4 +99,27 @@ Tensor ResidualBlock::backward(const Tensor& output_gradient) {
 
     this->input_cache = nullptr; 
     return grad_main;
+}
+
+void ResidualBlock::save(std::ofstream& out) const {
+    conv1.save(out);
+    conv2.save(out);
+    bool has_downsample = (downsample != nullptr);
+    out.write(reinterpret_cast<const char*>(&has_downsample), sizeof(bool));
+    if (has_downsample) {
+        downsample->save(out);
+    }
+}
+
+void ResidualBlock::load(std::ifstream& in) {
+    conv1.load(in);
+    conv2.load(in);
+    bool has_downsample;
+    in.read(reinterpret_cast<char*>(&has_downsample), sizeof(bool));
+    if (has_downsample) {
+        if (!downsample) {
+             throw std::runtime_error("Architecture mismatch in downsample");
+        }
+        downsample->load(in);
+    }
 }

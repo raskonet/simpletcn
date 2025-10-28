@@ -3,6 +3,7 @@
 
 #include <string>
 #include <cstddef> 
+#include <fstream>
 
 class Tensor {
 private:
@@ -18,10 +19,10 @@ public:
     Tensor(const Tensor&) = delete;
     Tensor& operator=(const Tensor&) = delete;
 
+    Tensor clone() const;
+
     Tensor(Tensor&& other) noexcept;
     Tensor& operator=(Tensor&& other) noexcept;
-
-
 
     double* get_data();
     const double* get_data() const;
@@ -29,8 +30,11 @@ public:
     int get_width() const;
     size_t get_total_size() const;
     std::string dimensions_str() const;
-
+    
     void zero(); 
+
+    void save(std::ofstream& out) const;
+    void load(std::ifstream& in);
 };
 
-#endif 
+#endif

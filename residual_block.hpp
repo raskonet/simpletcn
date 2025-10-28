@@ -6,10 +6,9 @@
 #include "relu.hpp"
 #include "dropout.hpp"
 #include <memory>
+#include <fstream>
 
-void test_numerical_gradients();
 class ResidualBlock : public Layer {
-  friend void test_numerical_gradients();
 private:
     Conv1D conv1;
     ReLU relu1;
@@ -20,19 +19,16 @@ private:
     Dropout dropout2;
     
     std::unique_ptr<Conv1D> downsample; 
-
-    const Tensor* input_cache;
-
+    std::unique_ptr<Tensor> input_cache;
 
 public:
     ResidualBlock(int in_channels, int n_filters, int kernel_size, int dilation, double dropout_rate);
     ~ResidualBlock() = default;
 
-    ResidualBlock(const ResidualBlock&) = delete;
-    ResidualBlock& operator=(const ResidualBlock&) = delete;
-
     ResidualBlock(ResidualBlock&&) = default;
     ResidualBlock& operator=(ResidualBlock&&) = default;
+    ResidualBlock(const ResidualBlock&) = delete;
+    ResidualBlock& operator=(const ResidualBlock&) = delete;
 
     Tensor forward(const Tensor& input) override;
     Tensor backward(const Tensor& output_gradient) override;
@@ -40,6 +36,10 @@ public:
     void update(double learning_rate);
     void zero_grad();
     void set_training_mode(bool training);
+    void clip_gradients(double threshold) override;
+    
+    void save(std::ofstream& out) const override;
+    void load(std::ifstream& in) override;
 };
 
 #endif

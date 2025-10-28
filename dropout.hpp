@@ -15,11 +15,13 @@ public:
     Dropout(double rate);
     ~Dropout() = default;
 
-    Dropout(const Dropout&) =delete;
-    Dropout& operator=(const Dropout&) = delete;
-
+    // --- FIX: Explicitly default move operations ---
     Dropout(Dropout&&) = default;
     Dropout& operator=(Dropout&&) = default;
+
+    Dropout(const Dropout&) = delete;
+    Dropout& operator=(const Dropout&) = delete;
+    // -----------------------------------------------
 
     Tensor forward(const Tensor& input) override;
     Tensor backward(const Tensor& output_gradient) override;
