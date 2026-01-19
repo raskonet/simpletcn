@@ -1,13 +1,3 @@
-**Yes. Absolutely change it.**
-
-Your current README is a "Placeholder." It says *what* the project is, but it doesn't sell *how hard* it was to build.
-For **Qualcomm, Citadel, and NVIDIA**, the README is your sales brochure. It needs to scream **"Systems Engineering,"** not just "Deep Learning."
-
-Here is the **"Tier-1 Systems Engineer" Version** of your README.
-It highlights the **Memory Management**, **Hybrid Backend**, and **Performance** aspects found in your code.
-
-***
-
 # PrismTCN: High-Performance C++ Inference Engine
 
 ![Language](https://img.shields.io/badge/C++-17-blue.svg) ![CUDA](https://img.shields.io/badge/CUDA-11.0%2B-green.svg) ![OpenMP](https://img.shields.io/badge/OpenMP-Enabled-orange.svg)
