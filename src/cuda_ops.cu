@@ -1,6 +1,24 @@
 #include "cuda_utils.hpp"
 #ifdef USE_CUDA
 #include <cuda_runtime.h>
+#include <device_launch_parameters.h>
+
+__device__ double prism_atomic_add(double* address, double val) {
+#if __CUDA_ARCH__ >= 600
+    // Pascal (GTX 10-series) and newer support native atomicAdd for double
+    return atomicAdd(address, val);
+#else
+    // Manual CAS loop for older cards (Maxwell, Kepler)
+    unsigned long long int* address_as_ull = (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
+    do { 
+        assumed = old; 
+        old = atomicCAS(address_as_ull, assumed, __double_as_longlong(val + __longlong_as_double(assumed))); 
+    } while (assumed != old);
+    return __longlong_as_double(old);
+#endif
+}
+
 
 __global__ void conv1d_k(const double* __restrict__ in, const double* __restrict__ w, const double* __restrict__ b, double* __restrict__ out, int ic, int oc, int width, int ksize, int dil) {
     int t = blockIdx.x * blockDim.x + threadIdx.x; 
@@ -32,28 +50,23 @@ void launch_add(const Tensor& a, const Tensor& b, Tensor& o) { add_k<<<(a.get_to
 __global__ void drop_k(const double* i, const double* m, double* o, int s, double sc) { int idx = blockIdx.x*blockDim.x+threadIdx.x; if(idx<s) o[idx]=i[idx]*m[idx]*sc; }
 void launch_dropout_apply(const Tensor& i, const Tensor& m, Tensor& o, double sc) { drop_k<<<(i.get_total_size()+255)/256, 256>>>(i.get_device_data(), m.get_device_data(), o.get_device_data(), i.get_total_size(), sc); CUDA_CHECK(cudaDeviceSynchronize()); }
 
-#if __CUDA_ARCH__ < 600
-__device__ double atomicAdd(double* address, double val) {
-    unsigned long long int* address_as_ull = (unsigned long long int*)address;
-    unsigned long long int old = *address_as_ull, assumed;
-    do { assumed = old; old = atomicCAS(address_as_ull, assumed, __double_as_longlong(val + __longlong_as_double(assumed))); } while (assumed != old);
-    return __longlong_as_double(old);
-}
-#endif
-
 __global__ void conv1d_bw_k(const double* __restrict__ grad_out, const double* __restrict__ input, const double* __restrict__ weights, double* __restrict__ grad_in, double* __restrict__ grad_w, double* __restrict__ grad_b, int ic, int oc, int width, int ksize, int dil) {
     int t = blockIdx.x * blockDim.x + threadIdx.x; 
     int o = blockIdx.y * blockDim.y + threadIdx.y; 
     if (t < width && o < oc) {
         double g = grad_out[o * width + t];
-        atomicAdd(&grad_b[o], g);
+        
+        // Use our wrapper
+        prism_atomic_add(&grad_b[o], g);
+
         int p = (ksize - 1) * dil;
         for (int i = 0; i < ic; ++i) {
             for (int k = 0; k < ksize; ++k) {
                 int in_t = t - (p - k * dil);
                 if (in_t >= 0 && in_t < width) {
-                    atomicAdd(&grad_w[(o * ic + i) * ksize + k], g * input[i * width + in_t]);
-                    atomicAdd(&grad_in[i * width + in_t], g * weights[(o * ic + i) * ksize + k]);
+                    // Use our wrapper
+                    prism_atomic_add(&grad_w[(o * ic + i) * ksize + k], g * input[i * width + in_t]);
+                    prism_atomic_add(&grad_in[i * width + in_t], g * weights[(o * ic + i) * ksize + k]);
                 }
             }
         }
@@ -67,22 +80,18 @@ void launch_conv1d_backward(const Tensor& grad_out, const Tensor& input, const T
     conv1d_bw_k<<<grid, block>>>(grad_out.get_device_data(), input.get_device_data(), weights.get_device_data(), grad_in.get_device_data(), grad_w.get_device_data(), grad_b.get_device_data(), input.get_channels(), grad_out.get_channels(), grad_out.get_width(), kernel_size, dilation);
     CUDA_CHECK(cudaDeviceSynchronize());
 }
-
 __global__ void relu_bw_k(const double* grad_out, const double* input, double* grad_in, int size) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < size) grad_in[i] = (input[i] > 0.0) ? grad_out[i] : 0.0;
 }
-
 void launch_relu_backward(const Tensor& grad_out, const Tensor& input_cache, Tensor& grad_in) {
     relu_bw_k<<<(grad_out.get_total_size() + 255)/256, 256>>>(grad_out.get_device_data(), input_cache.get_device_data(), grad_in.get_device_data(), grad_out.get_total_size());
     CUDA_CHECK(cudaDeviceSynchronize());
 }
-
 __global__ void sgd_k(double* params, const double* grads, int size, double lr) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < size) params[i] -= lr * grads[i];
 }
-
 void launch_sgd_update(Tensor& params, const Tensor& grads, double lr) {
     sgd_k<<<(params.get_total_size() + 255)/256, 256>>>(params.get_device_data(), grads.get_device_data(), params.get_total_size(), lr);
     CUDA_CHECK(cudaDeviceSynchronize());

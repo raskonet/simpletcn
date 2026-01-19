@@ -1,8 +1,0 @@
-/home/rasko/projects/tcn/build/CMakeFiles/tcn_app.dir
-/home/rasko/projects/tcn/build/CMakeFiles/conv1d_test.dir
-/home/rasko/projects/tcn/build/CMakeFiles/dropout_test.dir
-/home/rasko/projects/tcn/build/CMakeFiles/relu_test.dir
-/home/rasko/projects/tcn/build/CMakeFiles/residual_block_test.dir
-/home/rasko/projects/tcn/build/CMakeFiles/tcn_test.dir
-/home/rasko/projects/tcn/build/CMakeFiles/edit_cache.dir
-/home/rasko/projects/tcn/build/CMakeFiles/rebuild_cache.dir
