@@ -1,4 +1,3 @@
-````md
 # PrismTCN: High-Performance Hybrid Inference Engine
 
 ![Language](https://img.shields.io/badge/C++-17-blue.svg) ![CUDA](https://img.shields.io/badge/CUDA-11.0%2B-green.svg) ![OpenMP](https://img.shields.io/badge/OpenMP-Enabled-orange.svg)
