@@ -1,45 +1,26 @@
 #include "relu.hpp"
-#include <cmath>
-#include <stdexcept>
+#include "cuda_utils.hpp"
 #include <algorithm>
-
-Tensor ReLU::forward(const Tensor& input) {
-    // FIX: Clone input
-    input_cache = std::make_unique<Tensor>(input.clone());
-
-    const int channels = input.get_channels();
-    const int width = input.get_width();
-    Tensor output(channels, width);
-
-    const double* input_data = input.get_data();
-    double* output_data = output.get_data();
-
-    for (size_t i = 0; i < input.get_total_size(); ++i) {
-        output_data[i] = std::max(0.0, input_data[i]);
-    }
-
-    return output;
+const Tensor& ReLU::forward_ref(const Tensor& input) {
+    input_cache.copy_from(input);
+#ifdef USE_CUDA
+    if (input_cache.get_device() == Device::GPU) { launch_relu(input_cache); return input_cache; }
+#endif
+    double* d = input_cache.get_data(); for(size_t i=0; i<input_cache.get_total_size(); ++i) d[i] = std::max(0.0, d[i]);
+    return input_cache;
 }
-
-Tensor ReLU::backward(const Tensor& output_gradient) {
-    if (!input_cache) {
-        throw std::runtime_error("Backward called on ReLU without a forward pass.");
+Tensor ReLU::forward(const Tensor& i) { forward_ref(i); return input_cache.clone(); }
+const Tensor& ReLU::backward(const Tensor& g) {
+    grad_input_buffer.reallocate(input_cache.get_channels(), input_cache.get_width());
+#ifdef USE_CUDA
+    if (g.get_device() == Device::GPU) {
+        grad_input_buffer.to_device();
+        launch_relu_backward(g, input_cache, grad_input_buffer);
+        return grad_input_buffer;
     }
-    
-    Tensor grad_input(input_cache->get_channels(), input_cache->get_width());
-
-    const double* cached_input_data = input_cache->get_data();
-    const double* grad_output_data = output_gradient.get_data();
-    double* grad_input_data = grad_input.get_data();
-
-    for (size_t i = 0; i < grad_input.get_total_size(); ++i) {
-        if (cached_input_data[i] > 0) {
-            grad_input_data[i] = grad_output_data[i];
-        } else {
-            grad_input_data[i] = 0.0;
-        }
-    }
-
-    input_cache = nullptr; // Free memory
-    return grad_input;
+#endif
+    Tensor go = g.clone(); go.to_host(); input_cache.to_host();
+    double* p = go.get_data(); const double* x = input_cache.get_data(); double* d = grad_input_buffer.get_data();
+    for(size_t i=0; i<go.get_total_size(); ++i) d[i] = (x[i]>0) ? p[i] : 0;
+    return grad_input_buffer;
 }

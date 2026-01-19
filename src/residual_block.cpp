@@ -1,125 +1,64 @@
 #include "residual_block.hpp"
-#include <utility>      
-#include <cstring>     
-#include <stdexcept>  
-
-ResidualBlock::ResidualBlock(int in_channels, int n_filters, int kernel_size, int dilation, double dropout_rate)
-    : conv1(in_channels, n_filters, kernel_size, dilation),
-      relu1(),
-      dropout1(dropout_rate),
-      conv2(n_filters, n_filters, kernel_size, dilation),
-      relu2(),
-      dropout2(dropout_rate),
-      downsample(nullptr),
-      input_cache(nullptr) 
-{
-    if (in_channels != n_filters) {
-        downsample = std::make_unique<Conv1D>(in_channels, n_filters, 1, 1);
+#include "cuda_utils.hpp"
+#include <cstring>
+ResidualBlock::ResidualBlock(int in_c, int n_fil, int k, int d, double drop)
+    : conv1(in_c, n_fil, k, d), relu1(), dropout1(drop),
+      conv2(n_fil, n_fil, k, d), relu2(), dropout2(drop), downsample(nullptr) {
+    if (in_c != n_fil) downsample = std::make_unique<Conv1D>(in_c, n_fil, 1, 1);
+}
+const Tensor& ResidualBlock::forward_ref(const Tensor& input) {
+    const Tensor* x = &input;
+    x = &conv1.forward_ref(*x); x = &relu1.forward_ref(*x); x = &dropout1.forward_ref(*x);
+    x = &conv2.forward_ref(*x); x = &relu2.forward_ref(*x); x = &dropout2.forward_ref(*x);
+    const Tensor* res = &input; if(downsample) res = &downsample->forward_ref(input);
+    output_buffer.reallocate(x->get_channels(), x->get_width());
+#ifdef USE_CUDA
+    if (x->get_device() == Device::GPU) {
+        if (res->get_device() == Device::CPU) const_cast<Tensor*>(res)->to_device();
+        launch_add(*x, *res, output_buffer); return output_buffer;
     }
+#endif
+    const double* m = x->get_data(); const double* r = res->get_data(); double* o = output_buffer.get_data();
+    for(size_t i=0; i<output_buffer.get_total_size(); ++i) o[i] = m[i] + r[i];
+    return output_buffer;
 }
-
-void ResidualBlock::set_training_mode(bool training) {
-    dropout1.set_training_mode(training);
-    dropout2.set_training_mode(training);
-}
-
-void ResidualBlock::zero_grad() {
-    conv1.zero_grad();
-    conv2.zero_grad();
-    if (downsample) downsample->zero_grad();
-}
-
-void ResidualBlock::clip_gradients(double threshold) {
-    conv1.clip_gradients(threshold);
-    conv2.clip_gradients(threshold);
-    if (downsample) {
-        downsample->clip_gradients(threshold);
-    }
-}
-
-void ResidualBlock::update(double learning_rate) {
-    conv1.update(learning_rate);
-    conv2.update(learning_rate);
-    if (downsample) downsample->update(learning_rate);
-}
-
-Tensor ResidualBlock::forward(const Tensor& input) {
-    this->input_cache = std::make_unique<Tensor>(input.clone());
-
-    Tensor main_path_out = conv1.forward(input);
-    main_path_out = relu1.forward(main_path_out);
-    main_path_out = dropout1.forward(main_path_out);
-    main_path_out = conv2.forward(main_path_out);
-    main_path_out = relu2.forward(main_path_out);
-    main_path_out = dropout2.forward(main_path_out);
-
-    Tensor residual_out(input.get_channels(), input.get_width());
+Tensor ResidualBlock::forward(const Tensor& input) { return forward_ref(input).clone(); }
+const Tensor& ResidualBlock::backward(const Tensor& grad_out) {
+    const Tensor* g = &dropout2.backward(grad_out);
+    g = &relu2.backward(*g); g = &conv2.backward(*g);
+    g = &dropout1.backward(*g); g = &relu1.backward(*g); 
+    const Tensor& g_main = conv1.backward(*g);
     
-    if (downsample) {
-        residual_out = downsample->forward(input);
-    } else {
-        memcpy(residual_out.get_data(), input.get_data(), input.get_total_size() * sizeof(double));
-    }
-    
-    double* main_data = main_path_out.get_data();
-    const double* res_data = residual_out.get_data();
-    for (size_t i = 0; i < main_path_out.get_total_size(); ++i) {
-        main_data[i] += res_data[i];
-    }
-
-    return main_path_out;
-}
-
-Tensor ResidualBlock::backward(const Tensor& output_gradient) {
-    if (!this->input_cache) {
-        throw std::runtime_error("Backward called on ResidualBlock without a forward pass.");
-    }
-    
-    Tensor grad_main = dropout2.backward(output_gradient);
-    grad_main = relu2.backward(grad_main);
-    grad_main = conv2.backward(grad_main);
-    grad_main = dropout1.backward(grad_main);
-    grad_main = relu1.backward(grad_main);
-    grad_main = conv1.backward(grad_main);
+    grad_input_buffer.copy_from(g_main);
 
     if (downsample) {
-        Tensor grad_residual = downsample->backward(output_gradient);
-        double* g_main_data = grad_main.get_data();
-        const double* g_res_data = grad_residual.get_data();
-        for (size_t i = 0; i < grad_main.get_total_size(); ++i) {
-            g_main_data[i] += g_res_data[i];
+        const Tensor& g_res = downsample->backward(grad_out);
+#ifdef USE_CUDA
+        if (grad_input_buffer.get_device() == Device::GPU) {
+            launch_add(grad_input_buffer, g_res, grad_input_buffer);
+        } else 
+#endif
+        {
+            grad_input_buffer.to_host(); const_cast<Tensor&>(g_res).to_host();
+            double* gm = grad_input_buffer.get_data(); const double* gr = g_res.get_data();
+            for (size_t i = 0; i < grad_input_buffer.get_total_size(); ++i) gm[i] += gr[i];
         }
     } else {
-        double* g_main_data = grad_main.get_data();
-        const double* g_res_data = output_gradient.get_data();
-        for (size_t i = 0; i < grad_main.get_total_size(); ++i) {
-            g_main_data[i] += g_res_data[i];
+#ifdef USE_CUDA
+        if (grad_input_buffer.get_device() == Device::GPU) {
+            launch_add(grad_input_buffer, grad_out, grad_input_buffer);
+        } else 
+#endif
+        {
+            grad_input_buffer.to_host(); const_cast<Tensor&>(grad_out).to_host();
+            double* gm = grad_input_buffer.get_data(); const double* go = grad_out.get_data();
+            for (size_t i = 0; i < grad_input_buffer.get_total_size(); ++i) gm[i] += go[i];
         }
     }
-
-    this->input_cache = nullptr; 
-    return grad_main;
+    return grad_input_buffer;
 }
-
-void ResidualBlock::save(std::ofstream& out) const {
-    conv1.save(out);
-    conv2.save(out);
-    bool has_downsample = (downsample != nullptr);
-    out.write(reinterpret_cast<const char*>(&has_downsample), sizeof(bool));
-    if (has_downsample) {
-        downsample->save(out);
-    }
-}
-
-void ResidualBlock::load(std::ifstream& in) {
-    conv1.load(in);
-    conv2.load(in);
-    bool has_downsample;
-    in.read(reinterpret_cast<char*>(&has_downsample), sizeof(bool));
-    if (has_downsample) {
-        if (!downsample) {
-             throw std::runtime_error("Architecture mismatch in downsample");
-        }
-        downsample->load(in);
-    }
-}
+void ResidualBlock::update(double lr) { conv1.update(lr); conv2.update(lr); if(downsample) downsample->update(lr); }
+void ResidualBlock::zero_grad() { conv1.zero_grad(); conv2.zero_grad(); if(downsample) downsample->zero_grad(); }
+void ResidualBlock::set_training_mode(bool t) { dropout1.set_training_mode(t); dropout2.set_training_mode(t); }
+void ResidualBlock::save(std::ofstream& out) const { conv1.save(out); conv2.save(out); bool has=downsample!=nullptr; out.write((char*)&has,1); if(has) downsample->save(out); }
+void ResidualBlock::load(std::ifstream& in) { conv1.load(in); conv2.load(in); bool has; in.read((char*)&has,1); if(has){ if(!downsample) downsample=std::make_unique<Conv1D>(conv1.in_channels,conv1.out_channels,1,1); downsample->load(in); } }

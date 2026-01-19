@@ -1,32 +1,13 @@
 #ifndef DROPOUT_HPP
 #define DROPOUT_HPP
-
 #include "layer.hpp"
-#include "tensor.hpp"
-#include <memory> 
-
 class Dropout : public Layer {
-private:
-    double dropout_rate;
-    std::unique_ptr<Tensor> mask; 
-    bool is_training;
-
+    double rate; bool is_training; Tensor mask, output_buf, grad_input_buffer;
 public:
-    Dropout(double rate);
-    ~Dropout() = default;
-
-    // --- FIX: Explicitly default move operations ---
-    Dropout(Dropout&&) = default;
-    Dropout& operator=(Dropout&&) = default;
-
-    Dropout(const Dropout&) = delete;
-    Dropout& operator=(const Dropout&) = delete;
-    // -----------------------------------------------
-
+    Dropout(double r) : rate(r), is_training(true) {}
+    void set_training_mode(bool t) { is_training = t; }
+    const Tensor& forward_ref(const Tensor& input);
     Tensor forward(const Tensor& input) override;
-    Tensor backward(const Tensor& output_gradient) override;
-
-    void set_training_mode(bool training);
+    const Tensor& backward(const Tensor& g) override;
 };
-
 #endif

@@ -1,79 +1,32 @@
 #include "dropout.hpp"
+#include "cuda_utils.hpp"
 #include <random>
-#include <stdexcept>
-#include <cstring> 
-
-static std::mt19937& get_random_engine() {
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    return gen;
+const Tensor& Dropout::forward_ref(const Tensor& input) {
+    if(!is_training || rate==0.0) return input;
+    output_buf.reallocate(input.get_channels(), input.get_width());
+    mask.reallocate(input.get_channels(), input.get_width());
+    mask.to_host(); double* m = mask.get_data();
+    static std::mt19937 gen(42); std::bernoulli_distribution d(1.0-rate);
+    for(size_t i=0; i<mask.get_total_size(); ++i) m[i] = d(gen)?1.0:0.0;
+    double s = 1.0/(1.0-rate);
+    #ifdef USE_CUDA
+    if(input.get_device()==Device::GPU) { mask.to_device(); launch_dropout_apply(input, mask, output_buf, s); return output_buf; }
+    #endif
+    const double* in = input.get_data(); double* out = output_buf.get_data();
+    for(size_t i=0; i<input.get_total_size(); ++i) out[i] = in[i] * m[i] * s; 
+    return output_buf;
 }
-
-Dropout::Dropout(double rate) : dropout_rate(rate), is_training(true) {
-    if (rate < 0.0 || rate >= 1.0) {
-        throw std::invalid_argument("Dropout rate must be in the range [0, 1).");
-    }
-}
-
-void Dropout::set_training_mode(bool training) {
-    is_training = training;
-}
-
-Tensor Dropout::forward(const Tensor& input) {
-    if (!is_training || dropout_rate == 0.0) {
-        Tensor output(input.get_channels(), input.get_width());
-        memcpy(output.get_data(), input.get_data(), input.get_total_size() * sizeof(double));
-        return output;
-    }
-
-    const int channels = input.get_channels();
-    const int width = input.get_width();
+Tensor Dropout::forward(const Tensor& i) { return forward_ref(i).clone(); }
+const Tensor& Dropout::backward(const Tensor& g) {
+    if(!is_training || rate==0.0) return g;
+    grad_input_buffer.copy_from(g); 
     
-    Tensor output(channels, width);
-    mask = std::make_unique<Tensor>(channels, width);
-
-    const double* input_data = input.get_data();
-    double* output_data = output.get_data();
-    double* mask_data = mask->get_data();
+    grad_input_buffer.to_host(); mask.to_host();
+    double* d = grad_input_buffer.get_data(); const double* m = mask.get_data(); double s = 1.0/(1.0-rate);
+    for(size_t i=0; i<grad_input_buffer.get_total_size(); ++i) d[i] *= m[i] * s;
     
-    const double scale = 1.0 / (1.0 - dropout_rate);
-    std::bernoulli_distribution dist(1.0 - dropout_rate);
-
-    for (size_t i = 0; i < input.get_total_size(); ++i) {
-        if (dist(get_random_engine())) {
-            mask_data[i] = 1.0;
-            output_data[i] = input_data[i] * scale;
-        } else {
-            mask_data[i] = 0.0;
-            output_data[i] = 0.0;
-        }
-    }
-    
-    return output;
-}
-
-Tensor Dropout::backward(const Tensor& output_gradient) {
-    if (!is_training || dropout_rate == 0.0) {
-        Tensor grad_input(output_gradient.get_channels(), output_gradient.get_width());
-        memcpy(grad_input.get_data(), output_gradient.get_data(), output_gradient.get_total_size() * sizeof(double));
-        return grad_input;
-    }
-    
-    if (!mask || mask->get_total_size() != output_gradient.get_total_size()) {
-        throw std::runtime_error("Backward called on Dropout without a corresponding forward pass, or dimension mismatch.");
-    }
-    
-    Tensor grad_input(output_gradient.get_channels(), output_gradient.get_width());
-    
-    const double* grad_output_data = output_gradient.get_data();
-    const double* mask_data = mask->get_data();
-    double* grad_input_data = grad_input.get_data();
-
-    const double scale = 1.0 / (1.0 - dropout_rate);
-    
-    for (size_t i = 0; i < grad_input.get_total_size(); ++i) {
-        grad_input_data[i] = grad_output_data[i] * mask_data[i] * scale;
-    }
-
-    return grad_input;
+    #ifdef USE_CUDA
+    if(g.get_device()==Device::GPU) grad_input_buffer.to_device(); 
+    #endif
+    return grad_input_buffer;
 }

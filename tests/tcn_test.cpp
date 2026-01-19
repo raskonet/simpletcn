@@ -15,22 +15,25 @@ bool has_nans(const Tensor& t) {
 
 void test_tcn_flow() {
     std::cout << "--- Test 1: Full TCN Flow ---" << std::endl;
-    // Parameters
     int in_channels = 1;
     int num_filters = 4;
     int kernel_size = 3;
-    int levels = 2; // Dilations: 1, 2
+    int levels = 2; 
+    int output_channels = 1; 
+    double dropout = 0.0;    
     
-    TCN model(in_channels, num_filters, kernel_size, levels);
+    TCN model(in_channels, num_filters, kernel_size, levels, output_channels, dropout);
     
     Tensor input(in_channels, 10);
     for(size_t i=0; i<input.get_total_size(); ++i) input.get_data()[i] = 1.0;
     
     // 1. Forward
-    model.set_training_mode(false); // Deterministic
-    Tensor output = model.forward(input);
+    model.set_training_mode(false);
     
-    assert(output.get_channels() == num_filters);
+    // We capture the reference to check properties immediately
+    const Tensor& output = model.forward(input);
+    
+    assert(output.get_channels() == output_channels);
     assert(output.get_width() == 10);
     assert(!has_nans(output));
     
@@ -38,10 +41,11 @@ void test_tcn_flow() {
     
     // 2. Backward
     model.zero_grad();
-    Tensor grad_out(num_filters, 10);
+    Tensor grad_out(output_channels, 10);
     for(size_t i=0; i<grad_out.get_total_size(); ++i) grad_out.get_data()[i] = 0.1;
     
     Tensor grad_in = model.backward(grad_out);
+    
     assert(grad_in.get_channels() == in_channels);
     assert(grad_in.get_width() == 10);
     assert(!has_nans(grad_in));
@@ -55,60 +59,48 @@ void test_tcn_flow() {
 
 void test_receptive_field() {
     std::cout << "\n--- Test 2: Receptive Field Logic ---" << std::endl;
-    // TCN with levels=3, kernel=3.
-    // Dilation: 1, 2, 4.
-    // RF = 1 + 2*(3-1) + 2*(3-1)*2 + 2*(3-1)*4 = 1 + 4 + 8 + 16 = 29?
-    // Formula: RF = 1 + \sum (k-1)*d
-    // L1: (3-1)*1 = 2
-    // L2: (3-1)*2 = 4
-    // L3: (3-1)*4 = 8
-    // Total RF = 1 + 2 + 4 + 8 = 15.
     
     int k=3;
-    TCN model(1, 4, k, 3); 
+    TCN model(1, 4, k, 3, 1, 0.0); 
     
     Tensor input(1, 20);
     input.zero();
-    // Set impulse at end
-    input.get_data()[19] = 1.0; 
     
-    Tensor out = model.forward(input);
-    // If RF is 15, changing index 19 should affect index 19 down to 19-(15-1) = 5.
-    // Actually, TCN is causal. Output at t depends on t, t-1 ... t-RF.
-    // So Input at 19 affects Output at 19, 20, 21...
-    // Wait, we are testing dependency.
+    // --- TEST: Non-Causality (Leakage) Check ---
+    // We want to ensure that input at t=19 does NOT affect output at t=18.
     
-    // Let's test non-causality (leakage).
-    // Input at 19 should NOT affect Output at 18.
-    
-    // Reset
-    input.zero();
+    // Case A: Input with impulse at index 19
     input.get_data()[19] = 100.0;
     
-    Tensor out_causal = model.forward(input);
-    const double* d = out_causal.get_data();
+    // CRITICAL FIX: We must .clone() the result! 
+    // If we kept a reference, the next forward() call would overwrite the data
+    // because the engine reuses the same internal memory buffer.
+    Tensor out_impulse = model.forward(input).clone();
     
-    // Check output at 18. Should be exactly 0 (assuming biases are 0 or cancelled, strictly impulse response)
-    // But biases are initialized.
-    // Let's check difference.
-    
+    // Case B: Input without impulse
     input.get_data()[19] = 0.0;
-    Tensor out_base = model.forward(input);
-    const double* d_base = out_base.get_data();
     
-    // Check index 18
-    double diff_18 = std::abs(d[18] - d_base[18]);
+    // Now we can just use the reference for the second run
+    const Tensor& out_base_ref = model.forward(input);
+    
+    // Compare
+    const double* d_impulse = out_impulse.get_data();
+    const double* d_base = out_base_ref.get_data();
+    
+    // Check index 18 (Past) - Should be identical (0 difference)
+    double diff_18 = std::abs(d_impulse[18] - d_base[18]);
     if (diff_18 > 1e-9) {
         std::cout << "FAIL: Causal violation! Future input affected past output. Diff: " << diff_18 << std::endl;
         exit(1);
     }
     
-    // Check index 19 (should be affected)
-    double diff_19 = std::abs(d[19] - d_base[19]);
+    // Check index 19 (Current) - Should be different (input changed!)
+    // Note: It's theoretically possible for random weights to result in 0 change, but extremely unlikely.
+    double diff_19 = std::abs(d_impulse[19] - d_base[19]);
     if (diff_19 < 1e-9) {
-         // It might be 0 if weights initialized to 0, but they are random.
-         // Unlikely to be exactly 0.
-         std::cout << "WARNING: Current input did not affect current output. Weights might be zero?" << std::endl;
+         std::cout << "WARNING: Input changed but output did not. (Weights might be near zero)" << std::endl;
+    } else {
+         std::cout << "PASS: Dependency check (current input affects current output)." << std::endl;
     }
     
     std::cout << "PASS: Causality check (future input does not affect past output)." << std::endl;

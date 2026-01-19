@@ -1,5 +1,3 @@
-// File: relu_test.cpp
-
 #include "relu.hpp"
 #include "tensor.hpp"
 #include <iostream>
@@ -7,7 +5,6 @@
 #include <cmath>
 #include <cassert>
 
-// Helper to compare tensors for testing purposes
 bool tensors_are_equal(const Tensor& t1, const Tensor& t2, double tolerance = 1e-9) {
     if (t1.get_total_size() != t2.get_total_size()) return false;
     const double* d1 = t1.get_data();
@@ -24,7 +21,6 @@ bool tensors_are_equal(const Tensor& t1, const Tensor& t2, double tolerance = 1e
 void test_relu_layer() {
     std::cout << "--- Running ReLU Layer Test ---" << std::endl;
 
-    // --- 1. SETUP ---
     ReLU layer;
     const int channels = 1;
     const int width = 7;
@@ -33,7 +29,6 @@ void test_relu_layer() {
     std::vector<double> input_vals = {-3.0, -2.5, -0.1, 0.0, 0.5, 1.0, 4.2};
     for(int i = 0; i < width; ++i) input.get_data()[i] = input_vals[i];
 
-    // --- 2. TEST FORWARD PASS ---
     std::cout << "Testing forward pass..." << std::endl;
     Tensor output = layer.forward(input);
 
@@ -44,16 +39,15 @@ void test_relu_layer() {
     assert(tensors_are_equal(output, expected_output));
     std::cout << "PASS: Forward pass is correct." << std::endl;
 
-    // --- 3. TEST BACKWARD PASS ---
     std::cout << "\nTesting backward pass..." << std::endl;
     Tensor grad_output(channels, width);
     std::vector<double> grad_output_vals = {10, 20, 30, 40, 50, 60, 70};
     for(int i = 0; i < width; ++i) grad_output.get_data()[i] = grad_output_vals[i];
 
-    Tensor grad_input = layer.backward(grad_output);
+    // FIX: Use .clone()
+    Tensor grad_input = layer.backward(grad_output).clone();
 
     Tensor expected_grad_input(channels, width);
-    // Gradient should be 0 where input was <= 0, and passed through otherwise.
     std::vector<double> expected_grad_input_vals = {0.0, 0.0, 0.0, 0.0, 50, 60, 70};
     for(int i = 0; i < width; ++i) expected_grad_input.get_data()[i] = expected_grad_input_vals[i];
 

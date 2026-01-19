@@ -1,5 +1,3 @@
-// File: dropout_test.cpp
-
 #include "dropout.hpp"
 #include "tensor.hpp"
 #include <iostream>
@@ -38,7 +36,10 @@ void test_inference_mode() {
      for (size_t i = 0; i < grad_output.get_total_size(); ++i) {
         grad_output.get_data()[i] = static_cast<double>(i) * 0.5;
     }
-    Tensor grad_input = layer.backward(grad_output);
+    
+    // FIX: Use .clone() because backward returns a reference, and we want a new object
+    Tensor grad_input = layer.backward(grad_output).clone();
+    
     assert(tensors_are_equal(grad_output, grad_input));
     std::cout << "PASS: Backward pass in inference mode is an identity function." << std::endl;
 }
@@ -66,7 +67,6 @@ void test_training_mode_stats() {
         if (std::abs(out_data[i]) < 1e-9) {
             zero_count++;
         } else {
-            // Check that non-zero elements are correctly scaled
             assert(std::abs(out_data[i] - scale) < 1e-9);
         }
     }
@@ -100,17 +100,18 @@ void test_training_backward() {
     Tensor grad_output(1, 10);
     for(int i=0; i<10; ++i) grad_output.get_data()[i] = 2.0;
     
-    Tensor grad_input = layer.backward(grad_output);
+    // FIX: Use .clone()
+    Tensor grad_input = layer.backward(grad_output).clone();
     
     const double* out_data = output.get_data();
     const double* gi_data = grad_input.get_data();
     const double scale = 1.0 / (1.0 - 0.5);
 
     for (int i=0; i<10; ++i) {
-        if (std::abs(out_data[i]) < 1e-9) { // If neuron was dropped out
-            assert(std::abs(gi_data[i]) < 1e-9); // Its gradient must be zero
-        } else { // If neuron was kept
-            assert(std::abs(gi_data[i] - 2.0 * scale) < 1e-9); // Its gradient must be scaled
+        if (std::abs(out_data[i]) < 1e-9) { 
+            assert(std::abs(gi_data[i]) < 1e-9); 
+        } else { 
+            assert(std::abs(gi_data[i] - 2.0 * scale) < 1e-9); 
         }
     }
     std::cout << "PASS: Backward pass correctly applies the cached mask and scaling." << std::endl;
